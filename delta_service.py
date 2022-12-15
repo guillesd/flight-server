@@ -11,6 +11,7 @@ from deltalake import DeltaTable
 
 import logging
 from pathlib import Path
+from typing import List
 
 
 class DeltaServer(FlightServerBase):
@@ -25,34 +26,37 @@ class DeltaServer(FlightServerBase):
         self._location = location
         self._storage = storage
 
-    def _make_flight_info(self, table_name):
-        dataset_path = f"{self._storage}/{table_name}"
-        delta_table = DeltaTable(dataset_path)
+    def _make_flight_info(self, table_name) -> FlightInfo:
+        """
+        Aux function to get flight info.
+        """
+        table_path = f"{self._storage}/{table_name}"
+        delta_table = DeltaTable(table_path)
         dataset_object = delta_table.to_pyarrow_dataset()
         schema = dataset_object.schema
         size = 0
         for f in dataset_object.files:
-            logging.info(f"Reading metadata from {dataset_path}/{f}")
-            size += pq.read_metadata(f"{dataset_path}/{f}").serialized_size
+            logging.info(f"Reading metadata from {table_path}/{f}")
+            size += pq.read_metadata(f"{table_path}/{f}").serialized_size
 
-        descriptor = FlightDescriptor.for_path(dataset_path.encode("utf-8"))
-        endpoints = [FlightEndpoint(dataset_path, [self._location])]
+        descriptor = FlightDescriptor.for_path(table_path.encode("utf-8"))
+        endpoints = [FlightEndpoint(table_path, [self._location])]
         logging.info(f"Retrieving flight info for delta table {table_name}...")
         return FlightInfo(
             schema, descriptor, endpoints, dataset_object.count_rows(), size
         )
 
-    def get_flight_info(self, context, descriptor):
+    def get_flight_info(self, context, descriptor: FlightDescriptor) -> FlightInfo:
         return self._make_flight_info(descriptor.path[0].decode("utf-8"))
 
-    def list_flights(self, context, criteria):
-        for dataset in Path(self._storage).iterdir():
-            yield self._make_flight_info(dataset.name)
+    def list_flights(self, context, criteria) -> List[FlightInfo]:
+        for table in Path(self._storage).iterdir():
+            yield self._make_flight_info(table.name)
 
-    def do_get(self, context, ticket):
-        delta_path = ticket.ticket.decode("utf-8")
-        logging.info(f"Retrieving table data from {delta_path}...")
-        return RecordBatchStream(DeltaTable(delta_path).to_pyarrow_table())
+    def do_get(self, context, ticket) -> RecordBatchStream:
+        table_path = ticket.ticket.decode("utf-8")
+        logging.info(f"Retrieving table data from {table_path}...")
+        return RecordBatchStream(DeltaTable(table_path).to_pyarrow_table())
 
 if __name__ == "__main__":
     LOG_FORMAT = "%(asctime)s %(levelname)s: %(message)s"
@@ -63,5 +67,5 @@ if __name__ == "__main__":
         datefmt=DATE_FORMAT,
     )
     server = DeltaServer()
-    logging.info("Started gRPC server!")
+    logging.info(f"Started gRPC server at {server._location}!")
     server.serve()
